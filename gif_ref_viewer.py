@@ -5098,7 +5098,7 @@ class CanvasWidget(QWidget):
         self.pan_offset = QPoint(0, 0)
         self.pan_start = None
         self.pan_start_offset = None
-        self.canvas_scale = self.DEFAULT_SCALE
+        self.canvas_scale = self.DEFAULT_SCALE * 0.8
         self._item_float_pos = {}
         self._pan_float = [0.0, 0.0]
         # Left-drag selection
@@ -5116,6 +5116,7 @@ class CanvasWidget(QWidget):
         self._r_dragged = False
         self.R_DRAG_THRESHOLD = 6
         self._item_clipboard = []   # copied TextItem / GroupItem states
+        self._item_clipboard_time = 0.0  # 내부 복사 시각
         self._paste_offset = 0      # increments 20px per successive paste
         self._applyBg()
         self._cull_timer = QTimer()
@@ -8308,7 +8309,7 @@ class MainWindow(QMainWindow):
         self._tabs = [{
             'name': '탭 1', 'items': [], 'groups': [], 'item_float_pos': {},
             'pan_offset': QPoint(0, 0), 'pan_float': [0.0, 0.0],
-            'canvas_scale': CanvasWidget.DEFAULT_SCALE, 'bg_color': QColor(30, 30, 30),
+            'canvas_scale': CanvasWidget.DEFAULT_SCALE * 0.8, 'bg_color': QColor(30, 30, 30),
         }]
         self._active_tab = 0
         self.vtab_bar.setTabs(['탭 1'], 0)
@@ -8325,6 +8326,8 @@ class MainWindow(QMainWindow):
 
         self._project_path = None       # currently open .rvw file (None = unsaved)
         self._project_temp_dir = None   # temp dir for extracted assets
+        self._sys_clipboard_time = 0.0
+        QApplication.clipboard().dataChanged.connect(self._onSysClipboardChanged)
 
         self._initial_layout_done = False   # showEvent 이후 True
         self._panel_deferred_show = False   # showEvent 전에 패널을 열어야 하면 True
@@ -8608,6 +8611,7 @@ class MainWindow(QMainWindow):
         if not items:
             return
         self.canvas._item_clipboard = [item.getState() for item in items]
+        self.canvas._item_clipboard_time = __import__('time').time()
         self.canvas._paste_offset = 0
 
     def _duplicateSelected(self):
@@ -8755,12 +8759,19 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
 
+    def _onSysClipboardChanged(self):
+        import time
+        self._sys_clipboard_time = time.time()
+
     def _pasteClipboard(self):
-        if self.canvas._item_clipboard:
-            self._pasteInternalItems()
-            return
         cb = QApplication.clipboard()
         mime = cb.mimeData()
+        has_sys = mime.hasImage() or mime.hasUrls()
+        has_internal = bool(self.canvas._item_clipboard)
+        # 더 최근에 복사된 것을 붙여넣음
+        if has_internal and (not has_sys or self.canvas._item_clipboard_time >= self._sys_clipboard_time):
+            self._pasteInternalItems()
+            return
         cursor = self.canvas.mapFromGlobal(QCursor.pos())
 
         def _move_to_cursor(item):
