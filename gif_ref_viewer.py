@@ -5238,7 +5238,7 @@ class CanvasWidget(QWidget):
             for url in e.mimeData().urls():
                 ext = url.toLocalFile().lower()
                 if ext.endswith(('.gif', '.mp4', '.avi', '.mov', '.mkv', '.webm',
-                                  '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif')):
+                                  '.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', '.tga')):
                     e.acceptProposedAction()
                     return
         e.ignore()
@@ -5253,7 +5253,7 @@ class CanvasWidget(QWidget):
                     self.addItem(GifItem(path, self), drop_pos)
                 elif ext.endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm')) and HAS_OPENCV:
                     self.addItem(VideoItem(path, self), drop_pos)
-                elif ext.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif')):
+                elif ext.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', '.tga')):
                     self.addItem(ImageItem(path, self), drop_pos)
             except Exception as ex:
                 print(f'[dropEvent] {ex}')
@@ -8385,7 +8385,7 @@ class MainWindow(QMainWindow):
         main_lay.addWidget(body)
 
         # Status label
-        formats = ['GIF', 'PNG', 'JPG']
+        formats = ['GIF', 'PNG', 'JPG', 'TGA']
         if HAS_OPENCV:
             formats.append('MP4')
 
@@ -8894,7 +8894,7 @@ class MainWindow(QMainWindow):
                         item = VideoItem(path, self.canvas)
                         self.canvas.addItem(item)
                         _move_to_cursor(item)
-                    elif ext.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif')):
+                    elif ext.endswith(('.png', '.jpg', '.jpeg', '.webp', '.bmp', '.tiff', '.tif', '.tga')):
                         item = ImageItem(path, self.canvas)
                         self.canvas.addItem(item)
                         _move_to_cursor(item)
