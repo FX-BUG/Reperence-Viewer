@@ -1398,7 +1398,7 @@ class TrimDialog(QDialog):
 class _CropOverlay(QWidget):
     """빨간 핸들 오버레이로 직접 드래그해서 자르기 영역을 설정하는 위젯."""
     _HS = 7       # 핸들 사각형 반폭
-    _BTN_H = 54   # 하단 버튼 스트립 높이 (진행바 12px + 여백 + 버튼 28px)
+    _BTN_H = 70   # 하단 버튼 스트립 높이 (진행바 12px + 버튼행1 26px + 버튼행2 16px + 여백)
     _BAR_H = 12   # 재생 진행바 높이
 
     def __init__(self, item, canvas):
@@ -1429,11 +1429,15 @@ class _CropOverlay(QWidget):
 
         # 컨트롤바 표시 (GIF/비디오 재생 & 프레임바 유지)
         self._had_control_bar_hidden = False
-        # 컨트롤바 숨김 (편집창이 그 자리를 차지)
+        # 컨트롤바·호버바 숨김 (편집창이 그 자리를 차지)
         item._editing_overlay_active = True
         if hasattr(item, 'control_bar'):
             self._had_control_bar_hidden = item.control_bar.isVisible()
             item._hide_control_bar()
+        if hasattr(item, '_hover_bar'):
+            item._hover_bar.hide()
+        if hasattr(item, '_blend_bar'):
+            item._blend_bar.hide()
 
         self._drag_handle = None
         self._drag_start_pos = QPoint()
@@ -1485,7 +1489,7 @@ class _CropOverlay(QWidget):
 
         # ── 줌/리사이즈 대응: 라벨 크기 변화를 감지해 크롭 사각형도 비례 조정 ──
         new_lw, new_lh = lbl.width(), lbl.height()
-        if (new_lw != self._lw or new_lh != self._lh) and self._lw > 0 and self._lh > 0:
+        if (new_lw != self._lw or new_lh != self._lh) and self._lw > 0 and self._lh > 0 and new_lw > 0 and new_lh > 0:
             sx = new_lw / self._lw
             sy = new_lh / self._lh
             self._r = QRect(
@@ -1494,8 +1498,21 @@ class _CropOverlay(QWidget):
                 max(20, int(self._r.width()  * sx)),
                 max(20, int(self._r.height() * sy)),
             )
+            # 드래그 중이면 _drag_start_r 도 함께 스케일 → 좌표 불일치 방지
+            if self._drag_handle is not None:
+                self._drag_start_r = QRect(
+                    int(self._drag_start_r.left()  * sx),
+                    int(self._drag_start_r.top()   * sy),
+                    max(20, int(self._drag_start_r.width()  * sx)),
+                    max(20, int(self._drag_start_r.height() * sy)),
+                )
+                self._drag_start_pos = QPoint(
+                    int(self._drag_start_pos.x() * sx),
+                    int(self._drag_start_pos.y() * sy),
+                )
             self._lw = new_lw
             self._lh = new_lh
+        self._clamp_r()
 
         gp = lbl.mapToGlobal(QPoint(0, 0))
         pos = self._canvas.mapFromGlobal(gp)
@@ -1503,13 +1520,17 @@ class _CropOverlay(QWidget):
         h = self._lh + self._BTN_H
         self.setGeometry(pos.x(), pos.y(), w, h)
 
-        # 버튼 배치: 진행바(12px) + 여백(4px) 아래에 버튼 배치
-        bw, bh = 76, 28
+        # 버튼 배치: 진행바(12px) + 여백 아래에 2행 배치
+        # 행1: 자르기·취소 (적응형 너비, 좁을 때 좌측 정렬 / 넓을 때 중앙 정렬)
+        # 행2: 초기화 (좌측 소형)
+        bh = 26
+        bw = min(76, max(30, (w - 22) // 2))
         mid = w // 2
+        ok_x = max(8, mid - bw - 3)
         by = self._lh + self._BAR_H + 7
-        self._ok_btn.setGeometry(mid - bw - 6, by, bw, bh)
-        self._cancel_btn.setGeometry(mid + 6, by, bw, bh)
-        self._reset_btn.setGeometry(6, by + 5, 50, 18)
+        self._ok_btn.setGeometry(ok_x, by, bw, bh)
+        self._cancel_btn.setGeometry(ok_x + bw + 6, by, bw, bh)
+        self._reset_btn.setGeometry(8, by + bh + 4, 52, 16)
 
         # 컨트롤바 슬라이더 실시간 동기화 (GIF/Video)
         fc = getattr(self._item, 'frame_count', 0)
@@ -1525,7 +1546,21 @@ class _CropOverlay(QWidget):
             except RuntimeError:
                 pass
 
+        self.raise_()  # setGeometry 후 Windows HWND Z-순서 리셋 방지
         self.update()  # 진행바 실시간 갱신
+
+    # ── 경계 보정 ─────────────────────────────────────────────────────────────
+    def _clamp_r(self):
+        """self._r 를 [0, lw] x [0, lh] 안에 유지, 최소 크기 20×20 보장."""
+        lw, lh = self._lw, self._lh
+        if lw <= 0 or lh <= 0:
+            return
+        r = self._r
+        w = max(20, min(r.width(),  lw))
+        h = max(20, min(r.height(), lh))
+        x = max(0, min(lw - w, r.left()))
+        y = max(0, min(lh - h, r.top()))
+        self._r = QRect(x, y, w, h)
 
     # ── 핸들 위치 계산 ────────────────────────────────────────────────────────
     def _handle_rects(self):
@@ -1702,6 +1737,7 @@ class _CropOverlay(QWidget):
             else:  # 콘텐츠 영역 빈 곳 - 아이템 이동
                 self._item_dragging = True
                 self._item._sm_press(e)
+                self.raise_()  # item.raise_() 로 오버레이가 뒤로 밀리는 것 복원
             e.accept()
 
     def mouseMoveEvent(self, e):
@@ -1738,6 +1774,7 @@ class _CropOverlay(QWidget):
             if 'b' in h:
                 r.setBottom(max(r.top() + MIN, min(lh, self._drag_start_r.bottom() + delta.y())))
         self._r = r
+        self._clamp_r()
         self.update()
 
     def mouseReleaseEvent(self, e):
@@ -1747,6 +1784,7 @@ class _CropOverlay(QWidget):
                 self._item_dragging = False
             self._seeking = False
             self._drag_handle = None
+            self._clamp_r()
 
     def mouseDoubleClickEvent(self, e):
         """더블클릭 → 아이템에 재생/정지 전달."""
@@ -1763,11 +1801,11 @@ class _CropOverlay(QWidget):
         if key == Qt.Key_Left:
             r.moveLeft(max(0, r.left() - step))
         elif key == Qt.Key_Right:
-            r.moveLeft(min(lw - r.width(), r.left() + step))
+            r.moveLeft(min(max(0, lw - r.width()), r.left() + step))
         elif key == Qt.Key_Up:
             r.moveTop(max(0, r.top() - step))
         elif key == Qt.Key_Down:
-            r.moveTop(min(lh - r.height(), r.top() + step))
+            r.moveTop(min(max(0, lh - r.height()), r.top() + step))
         elif key in (Qt.Key_Return, Qt.Key_Enter):
             self._confirm(); return
         elif key == Qt.Key_Escape:
@@ -1783,6 +1821,7 @@ class _CropOverlay(QWidget):
                 QApplication.sendEvent(_main_window, e)
             return
         self._r = r
+        self._clamp_r()
         self.update()
 
     # ── 확인 / 취소 / 초기화 ─────────────────────────────────────────────────
@@ -1834,7 +1873,7 @@ class _TrimOverlay(QWidget):
     """타임라인 핸들로 구간(Trim)을 직관적으로 설정하는 오버레이."""
     _HS  = 10   # 핸들 히트 반폭(px)
     _TH  = 64   # 타임라인 바 높이
-    _BTH = 44   # 버튼 스트립 높이
+    _BTH = 60   # 버튼 스트립 높이 (버튼행1 26px + 버튼행2 16px + 여백)
     _PAD = 16   # 좌우 패딩
 
     def __init__(self, item, canvas):
@@ -1876,12 +1915,16 @@ class _TrimOverlay(QWidget):
         self._cancel_btn.clicked.connect(self._cancel_trim)
         self._reset_btn .clicked.connect(self._reset)
 
-        # 컨트롤바 숨김 (편집창이 그 자리를 차지)
+        # 컨트롤바·호버바 숨김 (편집창이 그 자리를 차지)
         item._editing_overlay_active = True
         self._ctrl_hidden = False
         if hasattr(item, 'control_bar'):
             self._ctrl_hidden = item.control_bar.isVisible()
             item._hide_control_bar()
+        if hasattr(item, '_hover_bar'):
+            item._hover_bar.hide()
+        if hasattr(item, '_blend_bar'):
+            item._blend_bar.hide()
 
         self._sync_timer = QTimer(self)
         self._sync_timer.timeout.connect(self._reposition)
@@ -1928,14 +1971,17 @@ class _TrimOverlay(QWidget):
         h   = self._lh + self._TH + self._BTH
         self.setGeometry(pos.x(), pos.y(), w, h)
 
-        # 버튼 위치
-        bw, bh = 76, 28
+        # 버튼 위치: 2행 배치 (행1: 적용·취소, 행2: 초기화)
+        bh = 26
+        bw = min(76, max(30, (w - 22) // 2))
         mid = w // 2
-        by  = self._lh + self._TH + (self._BTH - bh) // 2
-        self._ok_btn    .setGeometry(mid - bw - 6, by, bw, bh)
-        self._cancel_btn.setGeometry(mid + 6,       by, bw, bh)
-        self._reset_btn .setGeometry(6, by + 5, 52, 18)
+        ok_x = max(8, mid - bw - 3)
+        by  = self._lh + self._TH + 6
+        self._ok_btn    .setGeometry(ok_x,           by, bw, bh)
+        self._cancel_btn.setGeometry(ok_x + bw + 6,  by, bw, bh)
+        self._reset_btn .setGeometry(8, by + bh + 4, 52, 16)
 
+        self.raise_()  # setGeometry 후 Windows HWND Z-순서 리셋 방지
         # 드래그 중에는 mouseMoveEvent에서 update()가 이미 호출되므로 생략
         if self._drag is None and not getattr(self, '_item_dragging', False):
             self.update()
@@ -2054,6 +2100,7 @@ class _TrimOverlay(QWidget):
             elif e.pos().y() < self._lh:  # 콘텐츠 영역 - 아이템 이동
                 self._item_dragging = True
                 self._item._sm_press(e)
+                self.raise_()  # item.raise_() 로 오버레이가 뒤로 밀리는 것 복원
             e.accept()
 
     def mouseMoveEvent(self, e):
@@ -3616,6 +3663,8 @@ class ImageItem(QWidget, ResizeMixin, SelectableMixin):
         return bx, by
 
     def _show_hover_bar(self):
+        if getattr(self, '_editing_overlay_active', False):
+            return
         canvas = self.parent()
         if not canvas:
             return
@@ -3927,6 +3976,9 @@ class GifItem(QWidget, ResizeMixin, SelectableMixin):
         self.control_bar.slider.setMinimum(self._trim_start)
         self.control_bar.slider.setMaximum(self._trim_end)
         self.movie.jumpToFrame(self._trim_start)
+        # jumpToFrame 후 movie 는 Paused 상태 — is_playing 동기화
+        self.is_playing = False
+        self.control_bar.play_btn.setText('>')
         if hasattr(self, '_hover_bar'):
             self._hover_bar.refresh()
 
@@ -3965,13 +4017,20 @@ class GifItem(QWidget, ResizeMixin, SelectableMixin):
             return
         cur = self.movie.currentFrameNumber()
         if self.is_playing:
-            if cur < self._trim_start or cur > self._trim_end:
+            if cur < self._trim_start:
+                # trim 시작점 이전 → 앞으로 점프 (CacheNone도 전진은 동작)
                 self.movie.jumpToFrame(self._trim_start)
                 cur = self._trim_start
+            elif cur > self._trim_end:
+                if self._gif_cached:
+                    # CacheAll: 바로 시작점으로 후진
+                    self.movie.jumpToFrame(self._trim_start)
+                    cur = self._trim_start
+                # CacheNone: 후진 불가 → 끝까지 재생 후 frame 0에서 위의 cur < trim_start 처리로 점프
         rel = cur - self._trim_start + 1
         total = self._trim_end - self._trim_start + 1
         self.control_bar.frame_label.setText(f'{rel} / {total}')
-        if self.is_playing and not self.control_bar.slider._pressed:
+        if not self.control_bar.slider._pressed:
             self.control_bar.slider.blockSignals(True)
             self.control_bar.slider.setValue(cur)
             self.control_bar.slider.blockSignals(False)
@@ -4071,6 +4130,8 @@ class GifItem(QWidget, ResizeMixin, SelectableMixin):
         return bx, by
 
     def _show_hover_bar(self):
+        if getattr(self, '_editing_overlay_active', False):
+            return
         canvas = self.parent()
         if not canvas:
             return
@@ -4182,7 +4243,16 @@ class GifItem(QWidget, ResizeMixin, SelectableMixin):
 
     def _doStep(self):
         cur = self.movie.currentFrameNumber()
-        self.movie.jumpToFrame(max(0, min(self.frame_count - 1, cur + self._step_dir)))
+        target = max(0, min(self.frame_count - 1, cur + self._step_dir))
+        if not self._gif_cached and target < cur:
+            # CacheNone: jumpToFrame 후진 불가 — 처음부터 다시 재생해 target까지 진행
+            self.movie.stop()
+            self.movie.start()
+            self.movie.setPaused(True)
+            while self.movie.currentFrameNumber() < target:
+                self.movie.jumpToNextFrame()
+        else:
+            self.movie.jumpToFrame(target)
 
     def keyPressEvent(self, e):
         if e.key() in (Qt.Key_Left, Qt.Key_Right) and not e.isAutoRepeat():
@@ -4366,6 +4436,7 @@ class GifItem(QWidget, ResizeMixin, SelectableMixin):
 
 class _VideoDecodeWorker(QObject):
     frame_ready = pyqtSignal(object, int)  # QImage, frame_number
+    seek_failed = pyqtSignal()             # 디코딩 실패 — VideoItem이 in-flight 플래그 해제용
 
     def __init__(self, video_path, fps, original_size):
         super().__init__()
@@ -4439,6 +4510,8 @@ class _VideoDecodeWorker(QObject):
         if ret:
             self._current_frame = frame_num
             self._emit_frame(frame)
+        else:
+            self.seek_failed.emit()  # 디코딩 실패 → VideoItem in-flight 플래그 해제
         if was_active and not self._cleaning_up:
             self._timer.start(self._timer.interval())
 
@@ -4569,6 +4642,7 @@ class VideoItem(QWidget, ResizeMixin, SelectableMixin):
         self._worker.moveToThread(self._decode_thread)
         self._decode_thread.started.connect(self._worker.initialize)  # thread 안에서 cap 생성
         self._worker.frame_ready.connect(self._onFrameReady)
+        self._worker.seek_failed.connect(self._onSeekFailed)
         self._sig_start.connect(self._worker.start_playing)
         self._sig_stop.connect(self._worker.stop_playing)
         self._sig_speed.connect(self._worker.set_speed)
@@ -4634,6 +4708,13 @@ class VideoItem(QWidget, ResizeMixin, SelectableMixin):
         self.control_bar.slider.setMinimum(self._trim_start)
         self.control_bar.slider.setMaximum(self._trim_end)
         self._sig_trim.emit(self._trim_start, self._trim_end)
+        # 재생 중 seek storm 방지: worker 정지 후 seek
+        # (재생 중 showFrame → tick 프레임마다 _onFrameReady 재dispatch → _reopen_cap 폭주)
+        if self.is_playing:
+            self.is_playing = False
+            self.control_bar.play_btn.setText('>')
+            self._sig_stop.emit()
+        self._seek_in_flight = False  # 진행 중 in-flight 초기화
         self.showFrame(self._trim_start)
         if hasattr(self, '_hover_bar'):
             self._hover_bar.refresh()
@@ -4677,6 +4758,11 @@ class VideoItem(QWidget, ResizeMixin, SelectableMixin):
             self._do_seek()
         if not self._slider_dragging:
             self._updateSlider()
+
+    @pyqtSlot()
+    def _onSeekFailed(self):
+        """seek_to 디코딩 실패 시 in-flight 플래그 해제 — 이후 방향키/스크럽 정상 작동 보장"""
+        self._seek_in_flight = False
 
     def showFrame(self, frame_num):
         self.current_frame = frame_num
@@ -4795,6 +4881,8 @@ class VideoItem(QWidget, ResizeMixin, SelectableMixin):
         return bx, by
 
     def _show_hover_bar(self):
+        if getattr(self, '_editing_overlay_active', False):
+            return
         canvas = self.parent()
         if not canvas:
             return
@@ -5080,7 +5168,7 @@ class VideoItem(QWidget, ResizeMixin, SelectableMixin):
 # ── CanvasWidget ───────────────────────────────────────────────────────────────
 
 class CanvasWidget(QWidget):
-    DEFAULT_SCALE = 0.11   # 기준 100% (구 35% 뷰를 100%로 재정의)
+    DEFAULT_SCALE = 0.088  # 기준 100%
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -5098,7 +5186,7 @@ class CanvasWidget(QWidget):
         self.pan_offset = QPoint(0, 0)
         self.pan_start = None
         self.pan_start_offset = None
-        self.canvas_scale = self.DEFAULT_SCALE * 0.8
+        self.canvas_scale = self.DEFAULT_SCALE
         self._item_float_pos = {}
         self._pan_float = [0.0, 0.0]
         # Left-drag selection
@@ -8309,7 +8397,7 @@ class MainWindow(QMainWindow):
         self._tabs = [{
             'name': '탭 1', 'items': [], 'groups': [], 'item_float_pos': {},
             'pan_offset': QPoint(0, 0), 'pan_float': [0.0, 0.0],
-            'canvas_scale': CanvasWidget.DEFAULT_SCALE * 0.8, 'bg_color': QColor(30, 30, 30),
+            'canvas_scale': CanvasWidget.DEFAULT_SCALE, 'bg_color': QColor(30, 30, 30),
         }]
         self._active_tab = 0
         self.vtab_bar.setTabs(['탭 1'], 0)
