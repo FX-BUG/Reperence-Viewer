@@ -2,7 +2,7 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 
 $DIR        = Split-Path -Parent $MyInvocation.MyCommand.Definition
-$PYTHON_DIR = Join-Path $DIR 'python'
+$PYTHON_DIR = Join-Path $DIR '_app\python'
 $PYTHON_EXE = Join-Path $PYTHON_DIR 'python.exe'
 $PYTHON_URL = 'https://www.python.org/ftp/python/3.11.9/python-3.11.9-embed-amd64.zip'
 $PIP_URL    = 'https://bootstrap.pypa.io/get-pip.py'
@@ -10,7 +10,7 @@ $PIP_URL    = 'https://bootstrap.pypa.io/get-pip.py'
 # Already installed
 if (Test-Path $PYTHON_EXE) {
     [System.Windows.Forms.MessageBox]::Show(
-        "RPview is already installed.`nRun ReView.bat to launch.",
+        "RPview is already installed.`nUse RPview shortcut to launch.",
         "RPview Setup",
         [System.Windows.Forms.MessageBoxButtons]::OK,
         [System.Windows.Forms.MessageBoxIcon]::Information
@@ -161,9 +161,7 @@ $installScript = {
     try {
         $sync.Status   = 'Creating directories...'
         $sync.Progress = 5
-        if (-not (Test-Path $PYTHON_DIR)) {
-            New-Item -ItemType Directory -Path $PYTHON_DIR | Out-Null
-        }
+        [System.IO.Directory]::CreateDirectory($PYTHON_DIR) | Out-Null
 
         $sync.Status   = 'Downloading Python 3.11  (~11 MB)...'
         $sync.Progress = 10
@@ -250,10 +248,33 @@ $timer.Add_Tick({
         if ($sync.Success) {
             $pgFill.BackColor           = $C_SUCCESS
             $lbDone.ForeColor           = $C_SUCCESS
-            $lbDone.Text                = 'Installation complete. Run ReView.bat to launch.'
+            $lbDone.Text                = 'Installation complete. Use RPview shortcut to launch.'
             $btnClose.BackColor         = [System.Drawing.Color]::FromArgb(60, 120, 200)
             $btnClose.ForeColor         = [System.Drawing.Color]::FromArgb(240, 240, 240)
             $btnClose.FlatAppearance.BorderSize = 0
+
+            # --- Post-install: move all files into _app ---
+            try {
+                $appDir = Join-Path $DIR '_app'
+
+                # Move remaining files into _app
+                foreach ($f in @('RPview.bat', 'gif_ref_viewer.py', 'install_gui.ps1', 'Setup.bat', 'README.md')) {
+                    $src = Join-Path $DIR $f
+                    $dst = Join-Path $appDir $f
+                    if ((Test-Path $src) -and -not (Test-Path $dst)) {
+                        Move-Item $src $dst -Force
+                    }
+                }
+
+                # Create shortcut at root
+                $wsh = New-Object -ComObject WScript.Shell
+                $lnk = $wsh.CreateShortcut((Join-Path $DIR 'RPview.lnk'))
+                $lnk.TargetPath       = Join-Path $appDir 'RPview.bat'
+                $lnk.WorkingDirectory = $appDir
+                # Icon: image viewer icon from Windows system library
+                $lnk.IconLocation     = "$env:SystemRoot\system32\imageres.dll, 335"
+                $lnk.Save()
+            } catch { <# silently ignore post-install errors #> }
         } else {
             $pgFill.BackColor     = $C_ERROR
             $lbDone.ForeColor     = $C_ERROR

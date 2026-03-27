@@ -1,7 +1,7 @@
 @echo off
 set "DIR=%~dp0"
 if not exist "%DIR%python\python.exe" (
-    echo Run install.bat first!
+    echo Run Setup.bat first!
     pause
     exit /b 1
 )
